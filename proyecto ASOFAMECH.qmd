@@ -1,0 +1,392 @@
+---
+title: "ASOFAMECH"
+author: "Amaru Agüero Jimenez"
+date: "2023-12-27"
+format:
+  html:
+    code-fold: true
+---
+
+## Metodology and results.
+
+### Statistical Analysis.
+
+Statistical analysis was performed with R (Version 4.2.3) and Rstudio (Version 2023.03.0+386) statisticals softwares. All data were analyzed using one-tailed tests with a significance level of α = 0.05. Confidence intervals (CI) were constructed with a confidence level of 1 − α = 0.95, using the t Student distribution.
+
+### Intra class correlation for evaluators.
+
+Intra-Class Correlation (ICC) is a measure used in statistics to determine how strongly units in the same group resemble each other. It's often used in reliability studies where you want to assess the consistency or homogeneity within groups.
+
+Negative ICC estimates are possible and can be interpreted as indicating that the true ICC is low, that is, two members chosen randomly from any class vary almost as much as any two randomly chosen members of the whole population.
+
+```{r include=FALSE}
+library(knitr)
+library(DT)
+library(readxl)
+library(irr)
+library(tidyverse)
+library(broom)
+library(openxlsx)
+
+opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+### Descripitive
+
+```{r}
+DESCRIPTIVE <- read_excel("Tabulación Resultados Amaru.xlsx", 
+    col_types = c("text", "skip", "numeric", 
+        "numeric", "numeric", "numeric", 
+        "skip", "skip", "skip", "skip", "skip", 
+        "skip", "skip"))
+DESCRIPTIVE <- DESCRIPTIVE[-65,]  %>%
+  rename(Rol = ...1) %>% 
+  mutate(Rol = as.factor(Rol))
+
+DESCRIPTIVE$Rol <- as.factor(sapply(DESCRIPTIVE$Rol, function(x) {
+  if (grepl("OBS", x)) {
+    return("Evaluación")
+  } else if (grepl("Actua", x)) {
+    return("Simulación")
+  } else {
+    return(x)
+  }
+}))
+
+DESCRIPTIVE <- DESCRIPTIVE %>%
+  mutate("Sexo" = factor(`SEXO (Masculino=0 , Femenino=1)`, levels = c(0, 1), labels = c("Masculino", "Femenino"))) %>%
+  mutate("Carrera" = factor(`CARRERA (Medicina=0 ,Obstetricia =1)`, levels = c(0, 1), labels = c("Medicina", "Obstetricia"))) %>%
+  mutate("Exp. en Simulación" = factor(`EXPERIENCIA EN SIMULACION CLINICA (Si=0, No=1)`, levels = c(0, 1), labels = c("Si", "No"))) %>% 
+  select(1:2,6:8)
+
+# Calcular la media y los IC para cada nivel de "Rol"
+media_por_rol <- DESCRIPTIVE %>%
+  group_by(Rol) %>%
+  summarise(
+    Media = mean(EDAD, na.rm = TRUE),
+    Minimo = min(EDAD, na.rm = TRUE),
+    Mediana = median(EDAD, na.rm = TRUE),
+    Maximo = max(EDAD, na.rm = TRUE),
+    IC = list(tidy(t.test(EDAD, conf.level = 0.95))[c("estimate", "conf.low", "conf.high")])
+  ) %>%
+  unnest(IC) %>%
+  mutate(
+    Media_Con_IC = sprintf("%.1f (%.2f-%.2f)", estimate, conf.low, conf.high),
+    Media_Con_IC = gsub("\\.", ",", Media_Con_IC)
+  )
+
+# Calcular la media y los IC para toda la muestra
+media_total <- DESCRIPTIVE %>%
+  summarise(
+    Media = mean(EDAD, na.rm = TRUE),
+    Minimo = min(EDAD, na.rm = TRUE),
+    Mediana = median(EDAD, na.rm = TRUE),
+    Maximo = max(EDAD, na.rm = TRUE),
+    IC = list(tidy(t.test(EDAD, conf.level = 0.95))[c("estimate", "conf.low", "conf.high")])
+  ) %>%
+  unnest(IC) %>%
+  mutate(
+    Media_Con_IC = sprintf("%.1f (%.2f-%.2f)", estimate, conf.low, conf.high),
+    Media_Con_IC = gsub("\\.", ",", Media_Con_IC)
+  ) %>%
+  mutate(Rol = "Total")
+
+# Unir las tablas
+tabla_final <- bind_rows(media_por_rol, media_total) %>% select(1,9,3:5)
+
+# Función para calcular cantidad y porcentaje
+resumen_categorico <- function(data, column) {
+  data %>%
+    count(Rol, !!sym(column)) %>%
+    group_by(Rol) %>%
+    mutate(Porcentaje = n / sum(n) * 100) %>%
+    ungroup() %>%
+    mutate(
+      Resumen = sprintf("n=%d (%.1f%%)", n, Porcentaje),
+      Variable = !!sym(column)
+    ) %>%
+    select(Rol, Variable, Resumen)
+}
+
+# Aplicar la función a cada columna categórica
+resumen_sexo <- resumen_categorico(DESCRIPTIVE, "Sexo")
+resumen_carrera <- resumen_categorico(DESCRIPTIVE, "Carrera")
+resumen_experiencia <- resumen_categorico(DESCRIPTIVE, "Exp. en Simulación")
+
+# Unir las tablas de resumen
+tabla_resumen_total <- bind_rows(resumen_sexo, resumen_carrera, resumen_experiencia) %>%
+  pivot_wider(names_from = Variable, values_from = Resumen) %>%
+  complete(Rol, fill = list(Resumen = "n=0 (0.0%)"))
+
+# Calcular totales
+total_masculino <- sum(DESCRIPTIVE$Sexo == "Masculino", na.rm = TRUE)
+total_femenino <- sum(DESCRIPTIVE$Sexo == "Femenino", na.rm = TRUE)
+total_medicina <- sum(DESCRIPTIVE$Carrera == "Medicina", na.rm = TRUE)
+total_obstetricia <- sum(DESCRIPTIVE$Carrera == "Obstetricia", na.rm = TRUE)
+total_experiencia_si <- sum(DESCRIPTIVE$`Exp. en Simulación` == "Si", na.rm = TRUE)
+total_n <- nrow(DESCRIPTIVE)
+
+# Añadir fila para el total
+tabla_resumen_total <- tabla_resumen_total %>%
+  add_row(Rol = "Total", 
+          Masculino = sprintf("n=%d (%.1f%%)", total_masculino, total_masculino / total_n * 100),
+          Femenino = sprintf("n=%d (%.1f%%)", total_femenino, total_femenino / total_n * 100),
+          Medicina = sprintf("n=%d (%.1f%%)", total_medicina, total_medicina / total_n * 100),
+          Obstetricia = sprintf("n=%d (%.1f%%)", total_obstetricia, total_obstetricia / total_n * 100),
+          Si = sprintf("n=%d (%.1f%%)", total_experiencia_si, total_experiencia_si / total_n * 100))
+
+```
+
+```{r}
+DATA<- read_excel("Tabulación Resultados Amaru.xlsx", 
+    sheet = "Amaru")
+
+DATA[,5:516] <- DATA[,5:516]  %>% 
+  mutate(across(everything(), ~ifelse(. == "No aplica", NA_character_, as.character(.)))) %>% 
+  mutate(across(where(is.character), as.numeric))
+
+calculate_icc <- function(data, group_col, cols) {
+  data %>%
+    select(group_col, all_of(cols)) %>% 
+    group_by(!!sym(group_col)) %>% 
+    nest() %>%
+    mutate(
+      icc_results = map(data, ~icc(select(.x, where(~any(!is.na(.)))))),
+      icc_value = map_dbl(icc_results, ~.x$value),
+      p_value = map_dbl(icc_results, ~.x$p.value)
+    )
+}
+
+column_ranges <- list(
+  item1_time1 = c(5:20),
+  item1_time2 = c(21:36),
+  item2_time1 = c(37:52),
+  item2_time2 = c(53:68),
+  item3_time1 = c(69:84),
+  item3_time2 = c(85:100),
+  item4_time1 = c(101:116),
+  item4_time2 = c(117:132),
+  item5_time1 = c(133:148),
+  item5_time2 = c(149:164),
+  item6_time1 = c(165:180),
+  item6_time2 = c(181:196),
+  item7_time1 = c(197:212),
+  item7_time2 = c(213:228),
+  item8_time1 = c(229:244),
+  item8_time2 = c(245:260),
+  item9_time1 = c(261:276),
+  item9_time2 = c(277:292),
+  item10_time1 = c(293:308),
+  item10_time2 = c(309:324),
+  item11_time1 = c(325:340),
+  item11_time2 = c(341:356),
+  item12_time1 = c(357:372),
+  item12_time2 = c(373:388),
+  item13_time1 = c(389:404),
+  item13_time2 = c(405:420),
+  item14_time1 = c(421:436),
+  item14_time2 = c(437:452),
+  item15_time1 = c(453:468),
+  item15_time2 = c(469:484),
+  item16_time1 = c(485:500),
+  item16_time2 = c(501:516)
+)
+
+
+results_list <- lapply(column_ranges, function(cols) {
+  calculate_icc(DATA, "Grupo", cols)
+})
+
+names(results_list) <- names(column_ranges)
+
+results_list <- lapply(names(column_ranges), function(name) {
+  icc_results <- calculate_icc(DATA, "Grupo", column_ranges[[name]])
+  # Adding item_time column for identification
+  icc_results <- icc_results %>%
+    mutate(item_time = name) %>%
+    select(-data, -icc_results) %>% 
+    pivot_longer(cols = c(icc_value, p_value), names_to = "measure", values_to = "value") %>%
+    mutate(variable = paste(item_time, measure, sep = "_")) %>%
+    select(-item_time, -measure) %>%
+    pivot_wider(names_from = variable, values_from = value)
+  
+  return(icc_results)
+})
+
+# Combine all results into a single dataframe
+final_results <- bind_rows(results_list) %>%
+  group_by(Grupo) %>%
+  summarise(across(everything(), ~mean(., na.rm = TRUE)))
+
+
+# Function to calculate row means for given columns
+calculate_row_means <- function(df, cols) {
+  rowMeans(df[, cols, drop = FALSE], na.rm = TRUE)
+}
+
+
+datatable(final_results)
+```
+
+### Mean comparison between pre- and post-intervention,
+
+For the mean comparison between pre- and post-interventions for each item score and total item scores, the Wilcoxon signed-rank test was used, which is a non-parametric alternative to the paired t-test. This test was used when the assumptions of the paired t-test (such as the normal distribution of differences) were not met. It is appropriate to compare two related samples when the data are ordinal or when interval-level measurements do not follow a normal distribution.
+
+#### Scores for each item.
+
+```{r fig.dpi=800, fig.height=8, fig.width= 10}
+# Calculating row means for each item_time and storing in a new dataframe
+mean_values <- map(column_ranges, ~calculate_row_means(DATA, .x))
+
+# Binding the results into a single dataframe
+mean_values_df <- bind_cols(mean_values)
+names(mean_values_df) <- paste("mean", names(column_ranges), sep = "_")
+
+reshaped_df <- mean_values_df %>%
+  pivot_longer(everything(), names_to = "item_time", values_to = "mean") %>%
+  mutate(
+    item = gsub("_time[12]", "", item_time),
+    time = gsub(".*_(time[12])", "\\1", item_time)
+  ) %>%
+  select(-item_time) %>%
+  pivot_wider(names_from = time, values_from = mean)
+
+
+results_df <- reshaped_df %>%
+  rowwise() %>%
+  mutate(
+    mean_time1 = mean(time1, na.rm = TRUE),
+    mean_time2 = mean(time2, na.rm = TRUE),
+    ci_lower_time1 = mean_time1 - qt(0.975, df=16-1) * sd(time1, na.rm = TRUE) / sqrt(16),
+    ci_upper_time1 = mean_time1 + qt(0.975, df=16-1) * sd(time1, na.rm = TRUE) / sqrt(16),
+    ci_lower_time2 = mean_time2 - qt(0.975, df=16-1) * sd(time2, na.rm = TRUE) / sqrt(16),
+    ci_upper_time2 = mean_time2 + qt(0.975, df=16-1) * sd(time2, na.rm = TRUE) / sqrt(16),
+    wilcoxon_p_value = wilcox.test(time1, time2, paired = TRUE)$p.value
+  ) %>%
+  select(item, starts_with("mean"), starts_with("ci"), wilcoxon_p_value)
+
+
+graph_data <- results_df %>%
+  pivot_longer(
+    cols = c(mean_time1, mean_time2),
+    names_to = "time",
+    values_to = "mean"
+  ) %>%
+  mutate(
+    time = factor(time, levels = c("mean_time1", "mean_time2")),
+    ci_lower = if_else(time == "mean_time1", ci_lower_time1, ci_lower_time2),
+    ci_upper = if_else(time == "mean_time1", ci_upper_time1, ci_upper_time2)
+  )
+
+graph_data <- graph_data %>%
+  mutate(
+    item = as.numeric(str_replace(item, "mean_item", "")),
+    time = as.numeric(str_replace(time, "mean_time", "")),
+    time = factor(time, levels = c(1, 2), labels = c("Pre intervención", "Post intervención"))
+  ) %>% select(1,7,8,9,10,6)
+
+ggplot(graph_data, aes(x = as.factor(item), y = mean, fill = as.factor(time))) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7, alpha=0.7) +
+  geom_errorbar(
+    aes(ymin = ci_lower, ymax = ci_upper), 
+    width = 0.2, 
+    position = position_dodge(width = 0.8)
+  ) +
+  geom_text(
+    data = subset(graph_data, time == "Post intervención"),
+    aes(label = sprintf("p = %.2f", wilcoxon_p_value), y = ci_upper + 0.05),
+    position = position_dodge(width = 0.8),
+    vjust = 0,
+    size = 3
+  ) +
+  scale_fill_manual(values = c("Pre intervención" = "skyblue", "Post intervención" = "blue")) +
+  labs(x = "Item", y = "Media del puntaje MHPTS (IC. 95%)") +
+  theme_minimal() +
+  theme(legend.title = element_blank(),
+        legend.position = "top")
+
+```
+
+#### Total item scores.
+
+```{r fig.dpi=800, fig.height=8, fig.width= 4, out.width='40%'}
+
+# Assuming mean_values_df has columns like item1_time1, item1_time2, ..., item16_time1, item16_time2
+
+# Calculate row sums for time1 across all items
+mean_values_df$row_sum_time1 <- rowSums(mean_values_df[grepl("time1$", names(mean_values_df))], na.rm = TRUE)
+
+# Calculate row sums for time2 across all items
+mean_values_df$row_sum_time2 <- rowSums(mean_values_df[grepl("time2$", names(mean_values_df))], na.rm = TRUE)
+
+# Calculate the mean
+mean_time1 <- mean(mean_values_df$row_sum_time1, na.rm = TRUE)
+mean_time2 <- mean(mean_values_df$row_sum_time2, na.rm = TRUE)
+
+# Calculate t-student confidence intervals
+se_time1 <- sd(mean_values_df$row_sum_time1, na.rm = TRUE) / sqrt(nrow(mean_values_df))
+se_time2 <- sd(mean_values_df$row_sum_time2, na.rm = TRUE) / sqrt(nrow(mean_values_df))
+ci_lower_time1 <- mean_time1 - qt(0.975, df=nrow(mean_values_df)-1) * se_time1
+ci_upper_time1 <- mean_time1 + qt(0.975, df=nrow(mean_values_df)-1) * se_time1
+ci_lower_time2 <- mean_time2 - qt(0.975, df=nrow(mean_values_df)-1) * se_time2
+ci_upper_time2 <- mean_time2 + qt(0.975, df=nrow(mean_values_df)-1) * se_time2
+
+# Perform Wilcoxon signed-rank test
+wilcoxon_test <- wilcox.test(mean_values_df$row_sum_time1, mean_values_df$row_sum_time2, paired = TRUE)
+p_value <- wilcoxon_test$p.value
+
+# Create a new dataframe with the results
+results_df_2 <- data.frame(
+  time = c(1, 2),
+  mean = c(mean_time1, mean_time2),
+  ci_lower = c(ci_lower_time1, ci_lower_time2),
+  ci_upper = c(ci_upper_time1, ci_upper_time2),
+  p_value=p_value
+)
+results_df_2$time = factor(results_df_2$time, levels = c(1, 2), labels = c("Pre intervención", "Post intervención"))
+
+max_y <- max(results_df_2$ci_upper, na.rm = TRUE)
+
+ggplot(results_df_2, aes(x = time, y = mean, fill = time)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.9, alpha = 0.7) +
+  geom_errorbar(
+    aes(ymin = ci_lower, ymax = ci_upper),
+    width = 0.2,
+    position = position_dodge(0.7)
+  ) + 
+  geom_text(
+    aes(x = 1.5, y = max_y, label = sprintf("p = %.2f", results_df_2$p_value[1])),
+    vjust = -0.5,
+    size = 4
+  ) +
+  scale_fill_manual(values = c("Pre intervención" = "skyblue", "Post intervención" = "blue")) +
+  labs(x = "", y = "Media del puntaje MHPTS total de todos los items (IC. 95%)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+```{r include=FALSE}
+options(scipen = 999)
+
+results_df_2 <- pivot_wider(results_df_2 , names_from = time, values_from = c(mean, ci_lower, ci_upper, p_value)) %>%  mutate(item = "mean_itemTotal") %>% select(9,1:7)
+
+colnames(results_df_2) <- colnames(results_df)
+
+TABLA1 <- rbind(results_df,results_df_2) %>% 
+  ungroup() %>%
+  mutate(item = str_replace(item, "mean_item", "")) %>%  
+  mutate(abs_diff = abs(mean_time1 - mean_time2)) %>%
+  mutate(across(where(is.numeric), round, 4)) %>%
+  mutate(mean_time1 = paste0(mean_time1, " (", ci_lower_time1, "-", ci_upper_time1, ")"),
+         mean_time2 = paste0(mean_time2, " (", ci_lower_time2, "-", ci_upper_time2, ")")) %>%
+  mutate(across(everything(), ~ gsub("\\.", ",", .))) %>% select(1:3,9,8)
+
+
+write.xlsx(tabla_final, "TABLA1.xlsx")
+write.xlsx(tabla_resumen_total, "TABLA2.xlsx")
+write.xlsx(TABLA1, "TABLA3.xlsx")
+```

@@ -254,6 +254,4 @@ ggplot(results_df_2, aes(x = time, y = mean, fill = time)) +
   labs(x = "", y = "Media del puntaje total de todos los items (IC. 95%)") +
   theme_minimal() +
   theme(legend.position = "none")
-
-a
 ```
